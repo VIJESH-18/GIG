@@ -1,0 +1,131 @@
+# =========================================================================
+# GIGVERSE - Android Production .gitignore
+# =========================================================================
+
+# -------------------------------------------------------------------------
+# Gradle & Build Artifacts
+# -------------------------------------------------------------------------
+.gradle/
+.kotlin/
+build/
+*/build/
+app/build/
+bin/
+gen/
+out/
+
+# Built application files
+*.apk
+*.ap_
+*.aab
+*.aar
+
+# Files for the ART/Dalvik VM and Java classes
+*.dex
+*.class
+
+# -------------------------------------------------------------------------
+# Security & Secret Credentials (CRITICAL - Never commit)
+# -------------------------------------------------------------------------
+# Environment files
+.env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+# Always allow template example files
+!.env.example
+
+# Local properties & SDK paths
+local.properties
+**/local.properties
+secrets.properties
+secrets.xml
+
+# Keystore and signing certificates
+*.jks
+*.keystore
+*.p12
+*.key
+*.pem
+my-upload-key.jks
+debug.keystore
+
+# Cloud and Third-Party API Configuration
+google-services.json
+google-services.xml
+oauth-credentials.json
+aws-credentials.json
+
+# -------------------------------------------------------------------------
+# Android Studio / IntelliJ IDEA
+# -------------------------------------------------------------------------
+*.iml
+*.ipr
+*.iws
+.idea/
+.navigation/
+captures/
+assetWizardSettings.xml
+
+# -------------------------------------------------------------------------
+# NDK / Native Builds (C / C++)
+# -------------------------------------------------------------------------
+.externalNativeBuild/
+.cxx/
+ndkBuild/
+cmake-build-*/
+obj/
+*.so
+*.o
+
+# -------------------------------------------------------------------------
+# Testing & Reports
+# -------------------------------------------------------------------------
+**/build/reports/
+**/build/test-results/
+**/build/outputs/roborazzi/
+
+# -------------------------------------------------------------------------
+# Editor & Miscellaneous Files
+# -------------------------------------------------------------------------
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Log files
+*.log
+
+# Temporary and swap files
+*.bak
+*.tmp
+*~
+*.swp
+*.swo
+\#*\#
+.\#*
+
+# -------------------------------------------------------------------------
+# Operating System Files
+# -------------------------------------------------------------------------
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.directory
+.fuse_hidden*

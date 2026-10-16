@@ -1,0 +1,7 @@
+{
+  "name": "GIGVERSE",
+  "description": "Premium freelance & client collaboration marketplace with AI trust scoring, smart matching, duration prediction, live auction bid rooms, and parcel-style milestone tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
