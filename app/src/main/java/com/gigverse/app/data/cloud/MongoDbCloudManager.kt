@@ -94,8 +94,9 @@ object MongoDbCloudManager {
                 .build()
 
             val client = MongoClients.create(settings)
+            val db = client.getDatabase(dbName)
             mongoClient = client
-            mongoDatabase = client.getDatabase(dbName)
+            mongoDatabase = db
             isConnected = true
             isInitialized = true
             statusMessage = "Connected to MongoDB Cloud ($dbName)"
@@ -236,6 +237,7 @@ object MongoDbCloudManager {
     }
 
     suspend fun getUserByEmail(email: String): UserEntity? = withContext(Dispatchers.IO) {
+        if (!isConnected) initialize()
         val col = getCollection("users") ?: return@withContext null
         try {
             val doc = col.find(Filters.eq("email", SecurityUtils.normalizeEmail(email))).firstOrNull()
@@ -243,6 +245,30 @@ object MongoDbCloudManager {
         } catch (e: Throwable) {
             Log.e(TAG, "MongoDB getUserByEmail failed", e)
             null
+        }
+    }
+
+    suspend fun getUserById(id: String): UserEntity? = withContext(Dispatchers.IO) {
+        if (!isConnected) initialize()
+        val col = getCollection("users") ?: return@withContext null
+        try {
+            val doc = col.find(Filters.eq("_id", id)).firstOrNull()
+            doc?.let { documentToUser(it) }
+        } catch (e: Throwable) {
+            Log.e(TAG, "MongoDB getUserById failed", e)
+            null
+        }
+    }
+
+    suspend fun deleteUser(id: String): Boolean = withContext(Dispatchers.IO) {
+        if (!isConnected) initialize()
+        val col = getCollection("users") ?: return@withContext false
+        try {
+            col.deleteOne(Filters.eq("_id", id))
+            true
+        } catch (e: Throwable) {
+            Log.e(TAG, "MongoDB deleteUser failed", e)
+            false
         }
     }
 
@@ -462,8 +488,7 @@ object MongoDbCloudManager {
                 if (upsertProject(project)) syncedCount++
             }
 
-            // 3. Demo user check
-            seedDemoUsersIfEmpty()
+            // 3. Demo user check (only on-demand, not auto-seeded)
 
             statusMessage = "Synced $syncedCount records to MongoDB Cloud successfully."
             SyncResult(success = true, message = statusMessage, recordsSynced = syncedCount)
@@ -488,16 +513,24 @@ object MongoDbCloudManager {
         try {
             var pulledCount = 0
 
-            // 1. Pull Users
+            // 1. Pull Users and prune local accounts that do not exist in MongoDB Cloud
             val cloudUsers = getAllUsers()
-            cloudUsers.forEach { cloudUser ->
-                val existing = dao.getUserByIdSync(cloudUser.id)
-                if (existing == null) {
-                    dao.insertUser(cloudUser)
-                    pulledCount++
-                } else if (existing != cloudUser) {
-                    dao.updateUser(cloudUser)
-                    pulledCount++
+            if (cloudUsers.isNotEmpty()) {
+                val cloudUserIds = cloudUsers.map { it.id }.toSet()
+                cloudUsers.forEach { cloudUser ->
+                    val existing = dao.getUserByIdSync(cloudUser.id)
+                    if (existing == null) {
+                        dao.insertUser(cloudUser)
+                        pulledCount++
+                    } else if (existing != cloudUser) {
+                        dao.updateUser(cloudUser)
+                        pulledCount++
+                    }
+                }
+                dao.getAllUsersSync().forEach { localUser ->
+                    if (localUser.id !in cloudUserIds) {
+                        dao.deleteUserById(localUser.id)
+                    }
                 }
             }
 

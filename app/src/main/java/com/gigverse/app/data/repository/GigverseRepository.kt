@@ -1,6 +1,7 @@
 package com.gigverse.app.data.repository
 
 import com.gigverse.app.ai.GigverseAiEngine
+import com.gigverse.app.util.SecurityUtils
 import com.gigverse.app.data.cloud.MongoDbCloudManager
 import com.gigverse.app.data.local.AppDao
 import com.gigverse.app.data.model.BidEntity
@@ -25,6 +26,14 @@ class GigverseRepository(private val dao: AppDao) {
 
     private val cloudScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    private val isRunningInTest: Boolean by lazy {
+        try {
+            android.os.Build.FINGERPRINT.contains("robolectric", ignoreCase = true)
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     val allFreelancers: Flow<List<UserEntity>> = dao.getAllFreelancers()
     val allUsers: Flow<List<UserEntity>> = dao.getAllUsers()
     val floatedProjects: Flow<List<ProjectEntity>> = dao.getFloatedProjects()
@@ -33,8 +42,38 @@ class GigverseRepository(private val dao: AppDao) {
     val allDisputes: Flow<List<DisputeEntity>> = dao.getAllDisputes()
 
     fun getUserById(userId: String): Flow<UserEntity?> = dao.getUserById(userId)
-    suspend fun getUserByEmail(email: String): UserEntity? = dao.getUserByEmail(email)
-    suspend fun countUsersByEmail(email: String): Int = dao.countUsersByEmail(email)
+
+    suspend fun getUserByEmail(email: String): UserEntity? {
+        val normalized = SecurityUtils.normalizeEmail(email)
+        if (MongoDbCloudManager.isConnected && !isRunningInTest) {
+            try {
+                val cloudUser = MongoDbCloudManager.getUserByEmail(normalized)
+                if (cloudUser != null) {
+                    dao.insertUser(cloudUser)
+                    return cloudUser
+                }
+                // If Cloud is active and user does not exist in Cloud, purge any local orphan
+                val stale = dao.getUserByEmail(normalized)
+                if (stale != null) {
+                    dao.deleteUserById(stale.id)
+                }
+                return null
+            } catch (_: Throwable) {}
+        }
+        return dao.getUserByEmail(normalized)
+    }
+
+    suspend fun countUsersByEmail(email: String): Int {
+        val normalized = SecurityUtils.normalizeEmail(email)
+        if (MongoDbCloudManager.isConnected && !isRunningInTest) {
+            try {
+                val cloudUser = MongoDbCloudManager.getUserByEmail(normalized)
+                if (cloudUser != null) return 1
+                return 0
+            } catch (_: Throwable) {}
+        }
+        return dao.countUsersByEmail(normalized)
+    }
     fun getProjectById(projectId: String): Flow<ProjectEntity?> = dao.getProjectById(projectId)
     fun getMyProjects(userId: String): Flow<List<ProjectEntity>> = dao.getMyProjects(userId)
     fun getProposalsForProject(projectId: String): Flow<List<ProposalEntity>> = dao.getProposalsForProject(projectId)
@@ -83,7 +122,12 @@ class GigverseRepository(private val dao: AppDao) {
             try { MongoDbCloudManager.upsertUser(user) } catch (_: Throwable) {}
         }
     }
-    suspend fun deleteUser(userId: String) = dao.deleteUserById(userId)
+    suspend fun deleteUser(userId: String) {
+        dao.deleteUserById(userId)
+        cloudScope.launch {
+            try { MongoDbCloudManager.deleteUser(userId) } catch (_: Throwable) {}
+        }
+    }
 
     suspend fun syncWithCloud(): MongoDbCloudManager.SyncResult {
         return try {
@@ -370,6 +414,11 @@ class GigverseRepository(private val dao: AppDao) {
             comment = comment
         )
         dao.insertReview(review)
+        cloudScope.launch {
+            try {
+                MongoDbCloudManager.upsertReview(review)
+            } catch (_: Throwable) {}
+        }
 
         val targetUser = dao.getUserByIdSync(toUserId)
         if (targetUser != null && targetUser.role == "FREELANCER") {
@@ -389,16 +438,18 @@ class GigverseRepository(private val dao: AppDao) {
     }
 
     suspend fun sendMessage(projectId: String, senderId: String, senderName: String, senderRole: String, messageText: String) {
-        dao.insertMessage(
-            MessageEntity(
-                id = UUID.randomUUID().toString(),
-                projectId = projectId,
-                senderId = senderId,
-                senderName = senderName,
-                senderRole = senderRole,
-                message = messageText
-            )
+        val msg = MessageEntity(
+            id = UUID.randomUUID().toString(),
+            projectId = projectId,
+            senderId = senderId,
+            senderName = senderName,
+            senderRole = senderRole,
+            message = messageText
         )
+        dao.insertMessage(msg)
+        cloudScope.launch {
+            try { MongoDbCloudManager.upsertMessage(msg) } catch (_: Throwable) {}
+        }
     }
 
     /**

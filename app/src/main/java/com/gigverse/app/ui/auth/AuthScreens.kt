@@ -212,9 +212,6 @@ fun LoginScreen(
                     selected = selectedRoleTab == 0,
                     onClick = {
                         selectedRoleTab = 0
-                        if (email.isBlank() || email == "alex.mercer@codecraft.dev") {
-                            email = "sophia@novatech.io"
-                        }
                     },
                     text = {
                         Text(
@@ -235,9 +232,6 @@ fun LoginScreen(
                     selected = selectedRoleTab == 1,
                     onClick = {
                         selectedRoleTab = 1
-                        if (email.isBlank() || email == "sophia@novatech.io") {
-                            email = "alex.mercer@codecraft.dev"
-                        }
                     },
                     text = {
                         Text(
@@ -1706,11 +1700,11 @@ fun RegistrationScreen(
                 onClick = {
                     if (isFreelancer) {
                         val rate = hourlyRate.toDoubleOrNull() ?: 65.0
-                        val finalName = if (name.isBlank()) "Dev Prodigy" else name.trim()
-                        val finalEmail = if (email.isBlank()) "freelancer@gigverse.com" else email.trim()
-                        val finalPassword = if (password.isBlank()) "Gigverse2026!" else password.trim()
-                        val finalPhone = if (phone.isBlank()) "+1 555-0199" else phone.trim()
-                        val finalPortfolio = if (portfolioUrl.isBlank()) "https://portfolio.dev/freelancer" else portfolioUrl.trim()
+                        val finalName = name.trim()
+                        val finalEmail = email.trim()
+                        val finalPassword = password.trim()
+                        val finalPhone = phone.trim()
+                        val finalPortfolio = portfolioUrl.trim()
                         val finalAvatar = avatarUri ?: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300"
                         val finalDoc = govIdDocUri ?: "https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=400"
 
@@ -1734,11 +1728,11 @@ fun RegistrationScreen(
                             govIdDocUrl = finalDoc
                         )
                     } else {
-                        val finalName = if (name.isBlank()) "Client Partner" else name.trim()
-                        val finalCompany = if (company.isBlank()) "NovaTech Labs" else company.trim()
-                        val finalEmail = if (email.isBlank()) "partner@novatech.io" else email.trim()
-                        val finalPassword = if (password.isBlank()) "Gigverse2026!" else password.trim()
-                        val finalPhone = if (phone.isBlank()) "+1 415-555-0100" else phone.trim()
+                        val finalName = name.trim()
+                        val finalCompany = company.trim()
+                        val finalEmail = email.trim()
+                        val finalPassword = password.trim()
+                        val finalPhone = phone.trim()
 
                         viewModel.registerClient(
                             name = finalName,

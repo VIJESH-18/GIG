@@ -74,6 +74,14 @@ class GigverseViewModel(application: Application) : AndroidViewModel(application
     private val _cloudStatusMessage = MutableStateFlow("Initializing cloud synchronization...")
     val cloudStatusMessage: StateFlow<String> = _cloudStatusMessage.asStateFlow()
 
+    private val isTestEnvironment: Boolean by lazy {
+        try {
+            android.os.Build.FINGERPRINT.contains("robolectric", ignoreCase = true)
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     init {
         val db = AppDatabase.getDatabase(application)
         repository = GigverseRepository(db.appDao())
@@ -95,15 +103,17 @@ class GigverseViewModel(application: Application) : AndroidViewModel(application
             _currentScreen.value = ScreenNav.AuthLogin
         }
 
-        // Trigger background initial sync with MongoDB Cloud
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                repository.syncWithCloud()
-                _isCloudConnected.value = repository.isCloudConnected()
-                _cloudStatusMessage.value = repository.getCloudStatus()
-            } catch (t: Throwable) {
-                _isCloudConnected.value = false
-                _cloudStatusMessage.value = "Local mode active: ${t.message ?: t.javaClass.simpleName}"
+        // Trigger background initial sync with MongoDB Cloud (skipped in test sandbox to prevent background thread contention)
+        if (!isTestEnvironment) {
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    repository.syncWithCloud()
+                    _isCloudConnected.value = repository.isCloudConnected()
+                    _cloudStatusMessage.value = repository.getCloudStatus()
+                } catch (t: Throwable) {
+                    _isCloudConnected.value = false
+                    _cloudStatusMessage.value = "Local mode active: ${t.message ?: t.javaClass.simpleName}"
+                }
             }
         }
     }
