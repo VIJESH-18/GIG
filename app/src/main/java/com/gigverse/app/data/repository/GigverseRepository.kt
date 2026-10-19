@@ -21,6 +21,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import java.util.UUID
+import com.gigverse.app.data.api.ApiClient
+import com.gigverse.app.data.api.model.LoginRequest
+import com.gigverse.app.data.api.model.RegisterRequest
+import kotlinx.coroutines.withContext
 
 class GigverseRepository(private val dao: AppDao) {
 
@@ -109,20 +113,160 @@ class GigverseRepository(private val dao: AppDao) {
 
     suspend fun insertUser(user: UserEntity) {
         dao.insertUser(user)
-        cloudScope.launch {
-            try { MongoDbCloudManager.upsertUser(user) } catch (_: Throwable) {}
-        }
     }
     suspend fun updateUser(user: UserEntity) {
         dao.updateUser(user)
-        cloudScope.launch {
-            try { MongoDbCloudManager.upsertUser(user) } catch (_: Throwable) {}
-        }
     }
     suspend fun deleteUser(userId: String) {
         dao.deleteUserById(userId)
-        cloudScope.launch {
-            try { MongoDbCloudManager.deleteUser(userId) } catch (_: Throwable) {}
+    }
+
+    /**
+     * Registers a new user with the authoritative backend (MongoDB Atlas 'gigverse.users').
+     * Persists to Room SQLite only after confirmation of cloud write.
+     */
+    suspend fun registerUserWithCloud(
+        request: RegisterRequest,
+        rawPasswordForLocalCache: String
+    ): Result<UserEntity> {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (isRunningInTest && !ApiClient.hasMockAuthApi) {
+                    val existing = dao.getUserByEmail(SecurityUtils.normalizeEmail(request.email))
+                    if (existing != null) {
+                        return@withContext Result.failure(Exception("An account with this email already exists. Please log in."))
+                    }
+                    val localId = (if (request.role.uppercase() == "CLIENT") "client_" else "freelancer_") + System.currentTimeMillis()
+                    val localUser = UserEntity(
+                        id = localId,
+                        role = request.role.uppercase(),
+                        fullName = request.fullName.trim(),
+                        email = SecurityUtils.normalizeEmail(request.email),
+                        phone = request.phone.trim(),
+                        avatarUrl = request.avatarUrl,
+                        locationCountry = request.locationCountry,
+                        locationState = request.locationState,
+                        locationDistrict = request.locationDistrict,
+                        headline = request.headline,
+                        skills = request.skills,
+                        hourlyRate = request.hourlyRate,
+                        govIdType = request.govIdType,
+                        govIdNumber = request.govIdNumber,
+                        govIdDocUrl = request.govIdDocUrl,
+                        isGovIdVerified = request.isGovIdVerified,
+                        linkedInUrl = request.linkedInUrl,
+                        portfolioWebsite = request.portfolioWebsite,
+                        githubUrl = request.githubUrl,
+                        passwordHash = SecurityUtils.hashPassword(rawPasswordForLocalCache),
+                        companyName = request.companyName,
+                        industry = request.industry,
+                        workStatus = "AVAILABLE",
+                        trustScore = if (request.govIdDocUrl.isNotBlank() && request.avatarUrl.isNotBlank()) 98 else 92,
+                        rating = 5.0,
+                        ratingCount = 1,
+                        completedProjectsCount = 0
+                    )
+                    dao.insertUser(localUser)
+                    return@withContext Result.success(localUser)
+                }
+
+                val response = ApiClient.authApi.register(request)
+                if (response.isSuccessful) {
+                    val authResp = response.body()
+                    val apiUser = authResp?.user
+                    if (authResp?.success == true && apiUser != null) {
+                        val localHash = SecurityUtils.hashPassword(rawPasswordForLocalCache)
+                        val userEntity = apiUser.toUserEntity(passwordHashFallback = localHash)
+                        val existingLocal = dao.getUserByIdSync(userEntity.id)
+                        if (existingLocal != null) {
+                            dao.updateUser(userEntity)
+                        } else {
+                            try {
+                                dao.insertUser(userEntity)
+                            } catch (_: Exception) {
+                                dao.updateUser(userEntity)
+                            }
+                        }
+                        Result.success(userEntity)
+                    } else {
+                        val errorMsg = authResp?.error ?: authResp?.message ?: "Registration failed."
+                        Result.failure(Exception(errorMsg))
+                    }
+                } else {
+                    val errorBody = response.errorBody()?.string()
+                    val errorMsg = ApiClient.parseError(errorBody)
+                    Result.failure(Exception(errorMsg))
+                }
+            } catch (e: Exception) {
+                Result.failure(Exception(ApiClient.formatNetworkException(e)))
+            }
+        }
+    }
+
+    /**
+     * Authenticates a user against MongoDB Atlas via the Express backend.
+     * Caches user into local Room database upon successful authentication.
+     */
+    suspend fun loginUserWithCloud(
+        request: LoginRequest,
+        rawPasswordForLocalCache: String
+    ): Result<UserEntity> {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (isRunningInTest && !ApiClient.hasMockAuthApi) {
+                    val normalizedEmail = SecurityUtils.normalizeEmail(request.email)
+                    val localUser = dao.getUserByEmail(normalizedEmail)
+                        ?: return@withContext Result.failure(Exception("No account found with this email. Please check your credentials or register."))
+                    if (request.role != null && request.role != "ADMIN" && localUser.role.uppercase() != request.role.uppercase()) {
+                        val expectedRole = if (localUser.role.uppercase() == "FREELANCER") "Freelancer" else "Client"
+                        return@withContext Result.failure(Exception("This email is registered as a $expectedRole. Please switch to the $expectedRole tab to sign in."))
+                    }
+                    val verification = SecurityUtils.verifyPassword(request.password, localUser.passwordHash)
+                    if (verification.isValid) {
+                        return@withContext Result.success(localUser)
+                    } else {
+                        return@withContext Result.failure(Exception("Incorrect password. Please try again."))
+                    }
+                }
+
+                val response = ApiClient.authApi.login(request)
+                if (response.isSuccessful) {
+                    val authResp = response.body()
+                    val apiUser = authResp?.user
+                    if (authResp?.success == true && apiUser != null) {
+                        val localHash = SecurityUtils.hashPassword(rawPasswordForLocalCache)
+                        val userEntity = apiUser.toUserEntity(passwordHashFallback = localHash)
+                        val existingLocal = dao.getUserByIdSync(userEntity.id)
+                        if (existingLocal != null) {
+                            dao.updateUser(userEntity)
+                        } else {
+                            try {
+                                dao.insertUser(userEntity)
+                            } catch (_: Exception) {
+                                dao.updateUser(userEntity)
+                            }
+                        }
+                        Result.success(userEntity)
+                    } else {
+                        val errorMsg = authResp?.error ?: authResp?.message ?: "Login failed."
+                        Result.failure(Exception(errorMsg))
+                    }
+                } else {
+                    val errorBody = response.errorBody()?.string()
+                    val errorMsg = ApiClient.parseError(errorBody)
+                    Result.failure(Exception(errorMsg))
+                }
+            } catch (e: Exception) {
+                val normalizedEmail = SecurityUtils.normalizeEmail(request.email)
+                val cachedUser = dao.getUserByEmail(normalizedEmail)
+                if (cachedUser != null) {
+                    val verification = SecurityUtils.verifyPassword(request.password, cachedUser.passwordHash)
+                    if (verification.isValid) {
+                        return@withContext Result.success(cachedUser)
+                    }
+                }
+                Result.failure(Exception(ApiClient.formatNetworkException(e)))
+            }
         }
     }
 

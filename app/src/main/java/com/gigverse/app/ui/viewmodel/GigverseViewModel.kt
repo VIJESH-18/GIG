@@ -18,6 +18,8 @@ import com.gigverse.app.data.model.TaskEntity
 import com.gigverse.app.data.model.UserEntity
 import com.gigverse.app.data.model.UserRole
 import com.gigverse.app.data.repository.GigverseRepository
+import com.gigverse.app.data.api.model.LoginRequest
+import com.gigverse.app.data.api.model.RegisterRequest
 import com.gigverse.app.util.SecurityUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -479,49 +481,38 @@ class GigverseViewModel(application: Application) : AndroidViewModel(application
             return
         }
 
-        viewModelScope.launch {
-            val existing = repository.getUserByEmail(normalizedEmail)
-            if (existing != null) {
-                _statusMessage.value = "An account with this email already exists. Please log in."
-                return@launch
-            }
+        val request = RegisterRequest(
+            role = "FREELANCER",
+            fullName = trimmedName,
+            email = normalizedEmail,
+            password = trimmedPassword,
+            phone = phone.trim(),
+            avatarUrl = avatarUrl,
+            locationCountry = locationCountry,
+            locationState = locationState,
+            locationDistrict = locationDistrict,
+            headline = headline,
+            skills = skills,
+            hourlyRate = hourlyRate,
+            govIdType = govIdType,
+            govIdNumber = govIdNumber,
+            govIdDocUrl = govIdDocUrl,
+            isGovIdVerified = true,
+            linkedInUrl = linkedInUrl,
+            portfolioWebsite = portfolioUrl,
+            githubUrl = githubUrl
+        )
 
-            val id = "freelancer_${System.currentTimeMillis()}"
-            val newUser = UserEntity(
-                id = id,
-                role = "FREELANCER",
-                fullName = trimmedName,
-                email = normalizedEmail,
-                phone = phone.trim(),
-                avatarUrl = avatarUrl,
-                locationCountry = locationCountry,
-                locationState = locationState,
-                passwordHash = SecurityUtils.hashPassword(trimmedPassword),
-                locationDistrict = locationDistrict,
-                headline = headline,
-                skills = skills,
-                hourlyRate = hourlyRate,
-                govIdType = govIdType,
-                govIdNumber = govIdNumber,
-                govIdDocUrl = govIdDocUrl,
-                isGovIdVerified = true,
-                linkedInUrl = linkedInUrl,
-                portfolioWebsite = portfolioUrl,
-                githubUrl = githubUrl,
-                workStatus = "AVAILABLE",
-                trustScore = if (govIdDocUrl.isNotBlank() && avatarUrl.isNotBlank()) 98 else 92,
-                rating = 5.0,
-                ratingCount = 1,
-                completedProjectsCount = 0
-            )
-            try {
-                repository.insertUser(newUser)
-                sessionManager.saveUserSession(id, "FREELANCER", normalizedEmail)
-                _currentUserId.value = id
+        viewModelScope.launch {
+            val result = repository.registerUserWithCloud(request, trimmedPassword)
+            if (result.isSuccess) {
+                val newUser = result.getOrThrow()
+                sessionManager.saveUserSession(newUser.id, "FREELANCER", normalizedEmail)
+                _currentUserId.value = newUser.id
                 _statusMessage.value = "Welcome to GIGVERSE, $trimmedName! Profile & credentials verified."
                 _currentScreen.value = ScreenNav.Dashboard
-            } catch (e: Exception) {
-                _statusMessage.value = "An account with this email already exists. Please log in."
+            } else {
+                _statusMessage.value = result.exceptionOrNull()?.message ?: "An account with this email already exists. Please log in."
             }
         }
     }
@@ -618,37 +609,29 @@ class GigverseViewModel(application: Application) : AndroidViewModel(application
             return
         }
 
-        viewModelScope.launch {
-            val existing = repository.getUserByEmail(normalizedEmail)
-            if (existing != null) {
-                _statusMessage.value = "An account with this email already exists. Please log in."
-                return@launch
-            }
+        val request = RegisterRequest(
+            role = "CLIENT",
+            fullName = trimmedName,
+            companyName = company.trim(),
+            email = normalizedEmail,
+            password = trimmedPassword,
+            phone = phone.trim(),
+            locationCountry = country,
+            locationState = state,
+            locationDistrict = district,
+            industry = industry
+        )
 
-            val id = "client_${System.currentTimeMillis()}"
-            val newUser = UserEntity(
-                id = id,
-                role = "CLIENT",
-                fullName = trimmedName,
-                companyName = company.trim(),
-                email = normalizedEmail,
-                phone = phone.trim(),
-                locationCountry = country,
-                passwordHash = SecurityUtils.hashPassword(trimmedPassword),
-                locationState = state,
-                locationDistrict = district,
-                industry = industry,
-                totalSpent = 0.0,
-                projectsPostedCount = 0
-            )
-            try {
-                repository.insertUser(newUser)
-                sessionManager.saveUserSession(id, "CLIENT", normalizedEmail)
-                _currentUserId.value = id
+        viewModelScope.launch {
+            val result = repository.registerUserWithCloud(request, trimmedPassword)
+            if (result.isSuccess) {
+                val newUser = result.getOrThrow()
+                sessionManager.saveUserSession(newUser.id, "CLIENT", normalizedEmail)
+                _currentUserId.value = newUser.id
                 _statusMessage.value = "Client Account Created! Ready to float projects."
                 _currentScreen.value = ScreenNav.Dashboard
-            } catch (e: Exception) {
-                _statusMessage.value = "An account with this email already exists. Please log in."
+            } else {
+                _statusMessage.value = result.exceptionOrNull()?.message ?: "An account with this email already exists. Please log in."
             }
         }
     }
@@ -674,38 +657,26 @@ class GigverseViewModel(application: Application) : AndroidViewModel(application
             onResult?.invoke(false, msg)
             return
         }
+        val request = LoginRequest(
+            email = normalizedEmail,
+            password = trimmedPassword,
+            role = if (role == UserRole.ADMIN) null else role.name
+        )
         viewModelScope.launch {
-            val user = repository.getUserByEmail(normalizedEmail)
-            if (user != null) {
-                if (role != UserRole.ADMIN && user.role.uppercase() != role.name.uppercase()) {
-                    val expectedRole = if (user.role.uppercase() == "FREELANCER") "Freelancer" else "Client"
-                    val msg = "This email is registered as a $expectedRole. Please switch to the $expectedRole tab to sign in."
-                    _statusMessage.value = msg
-                    onResult?.invoke(false, msg)
-                    return@launch
-                }
-                val verification = SecurityUtils.verifyPassword(trimmedPassword, user.passwordHash)
-                if (verification.isValid) {
-                    if (verification.needsRehash) {
-                        val upgradedHash = SecurityUtils.hashPassword(trimmedPassword)
-                        repository.updateUser(user.copy(passwordHash = upgradedHash))
-                    }
-                    _currentUserId.value = user.id
-                    sessionManager.setRememberMePreference(rememberMe)
-                    sessionManager.saveUserSession(user.id, user.role, user.email, rememberMe = rememberMe)
-                    val msg = "Welcome back, ${user.fullName}!"
-                    _statusMessage.value = msg
-                    _currentScreen.value = if (user.role == "ADMIN") ScreenNav.AdminDashboard else ScreenNav.Dashboard
-                    onResult?.invoke(true, msg)
-                } else {
-                    val msg = "Incorrect password. Please try again."
-                    _statusMessage.value = msg
-                    onResult?.invoke(false, msg)
-                }
-            } else {
-                val msg = "No account found with this email. Please check your credentials or register."
+            val result = repository.loginUserWithCloud(request, trimmedPassword)
+            if (result.isSuccess) {
+                val user = result.getOrThrow()
+                _currentUserId.value = user.id
+                sessionManager.setRememberMePreference(rememberMe)
+                sessionManager.saveUserSession(user.id, user.role, user.email, rememberMe = rememberMe)
+                val msg = "Welcome back, ${user.fullName}!"
                 _statusMessage.value = msg
-                onResult?.invoke(false, msg)
+                _currentScreen.value = if (user.role == "ADMIN") ScreenNav.AdminDashboard else ScreenNav.Dashboard
+                onResult?.invoke(true, msg)
+            } else {
+                val errorMsg = result.exceptionOrNull()?.message ?: "Authentication failed. Please check your credentials."
+                _statusMessage.value = errorMsg
+                onResult?.invoke(false, errorMsg)
             }
         }
     }

@@ -1,0 +1,16 @@
+﻿services:
+  - type: web
+    name: gigverse-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: MONGODB_DATABASE
+        value: gigverse
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true

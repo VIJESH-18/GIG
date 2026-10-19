@@ -1,4 +1,4 @@
-import java.util.Properties
+﻿import java.util.Properties
 
 plugins {
   alias(libs.plugins.android.application)
@@ -13,18 +13,24 @@ android {
   namespace = "com.gigverse.app"
   compileSdk = 36
 
+  val envFile = file("${rootDir}/.env")
+  val envProps = Properties()
+  if (envFile.exists()) {
+    envFile.inputStream().use { envProps.load(it) }
+  }
+
+  val localPropsFile = rootProject.file("local.properties")
+  val localProps = Properties()
+  if (localPropsFile.exists()) {
+    localPropsFile.inputStream().use { localProps.load(it) }
+  }
+
   defaultConfig {
     applicationId = "com.gigverse.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = 7
-    versionName = "1.3.1"
-
-    val envFile = file("${rootDir}/.env")
-    val envProps = Properties()
-    if (envFile.exists()) {
-      envFile.inputStream().use { envProps.load(it) }
-    }
+    versionCode = 9
+    versionName = "1.4.1"
 
     val brevoKey = envProps.getProperty("BREVO_API_KEY") ?: System.getenv("BREVO_API_KEY") ?: ""
     val smtpHost = envProps.getProperty("SMTP_HOST") ?: System.getenv("SMTP_HOST") ?: "smtp-relay.brevo.com"
@@ -34,16 +40,6 @@ android {
     val smtpFromEmail = envProps.getProperty("SMTP_FROM_EMAIL") ?: System.getenv("SMTP_FROM_EMAIL") ?: "godfrey.cs23@krct.ac.in"
     val smtpFromName = envProps.getProperty("SMTP_FROM_NAME") ?: System.getenv("SMTP_FROM_NAME") ?: "GIGVERSE Security !"
 
-    val localPropsFile = rootProject.file("local.properties")
-    val localProps = Properties()
-    if (localPropsFile.exists()) {
-      localPropsFile.inputStream().use { localProps.load(it) }
-    }
-    val rawMongoUri = (localProps.getProperty("MONGODB_URI")
-        ?: localProps.getProperty("mongodb.uri")
-        ?: envProps.getProperty("MONGODB_URI")
-        ?: System.getenv("MONGODB_URI")
-        ?: "").trim().removeSurrounding("\"").removeSurrounding("'")
     val rawMongoDatabase = (localProps.getProperty("MONGODB_DATABASE")
         ?: localProps.getProperty("mongodb.database")
         ?: envProps.getProperty("MONGODB_DATABASE")
@@ -56,7 +52,14 @@ android {
     buildConfigField("String", "SMTP_PASS", "\"${smtpPass}\"")
     buildConfigField("String", "SMTP_FROM_EMAIL", "\"${smtpFromEmail}\"")
     buildConfigField("String", "SMTP_FROM_NAME", "\"${smtpFromName}\"")
-    buildConfigField("String", "MONGODB_URI", "\"${rawMongoUri}\"")
+    val rawBackendUrl = (localProps.getProperty("BACKEND_URL")
+        ?: envProps.getProperty("BACKEND_URL")
+        ?: System.getenv("BACKEND_URL")
+        ?: "http://192.168.1.9:5000/").trim().removeSurrounding("\"").removeSurrounding("'")
+    val backendUrl = if (rawBackendUrl.endsWith("/")) rawBackendUrl else "${rawBackendUrl}/"
+
+    buildConfigField("String", "BACKEND_URL", "\"${backendUrl}\"")
+    buildConfigField("String", "MONGODB_URI", "\"\"")
     buildConfigField("String", "MONGODB_DATABASE", "\"${rawMongoDatabase}\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -92,6 +95,54 @@ android {
       buildConfigField("String", "ENVIRONMENT", "\"PRODUCTION\"")
       buildConfigField("boolean", "ENABLE_ANALYTICS", "true")
       buildConfigField("boolean", "ENABLE_MOCK_SEEDING", "false")
+      val rawProdUrl = (localProps.getProperty("BACKEND_PROD_URL")
+          ?: envProps.getProperty("BACKEND_PROD_URL")
+          ?: System.getenv("BACKEND_PROD_URL"))?.trim()?.removeSurrounding("\"")?.removeSurrounding("'")
+
+      val isReleaseTarget = gradle.startParameter.taskNames.any { name ->
+          name.contains("assembleRelease", ignoreCase = true) ||
+          name.contains("bundleRelease", ignoreCase = true) ||
+          name.contains("packageRelease", ignoreCase = true)
+      }
+
+      val finalProdUrl: String = if (!rawProdUrl.isNullOrBlank()) {
+          val normalized = if (rawProdUrl.endsWith("/")) rawProdUrl else "$rawProdUrl/"
+          if (!normalized.startsWith("https://", ignoreCase = true)) {
+              throw GradleException(
+                  "FATAL CONFIGURATION ERROR: BACKEND_PROD_URL must use secure HTTPS! Provided: '$rawProdUrl'"
+              )
+          }
+          if (normalized.contains("10.0.2.2") || normalized.contains("192.168.") ||
+              normalized.contains("127.0.0.1") || normalized.contains("localhost")) {
+              throw GradleException(
+                  "FATAL CONFIGURATION ERROR: BACKEND_PROD_URL cannot use a local development address! Provided: '$rawProdUrl'"
+              )
+          }
+          normalized
+      } else {
+          if (isReleaseTarget) {
+              throw GradleException(
+                  """
+                  ======================================================================================
+                  FATAL RELEASE CONFIGURATION ERROR: BACKEND_PROD_URL is missing!
+                  
+                  Production release builds (bundleRelease / assembleRelease) require a deployed public HTTPS backend URL.
+                  No fallback to local development URLs (192.168.1.9, 10.0.2.2, localhost) is permitted.
+                  
+                  To resolve:
+                  1. Deploy the backend to your public hosting service (e.g. Render, Railway, AWS).
+                  2. Verify the public health endpoint responds at: https://<your-service>/api/health
+                  3. Add the verified URL to local.properties or environment variable:
+                     BACKEND_PROD_URL="https://<your-service>/"
+                  ======================================================================================
+                  """.trimIndent()
+              )
+          } else {
+              "https://unconfigured-production-backend.gigverse.io/"
+          }
+      }
+
+      buildConfigField("String", "BACKEND_URL", "\"${finalProdUrl}\"")
     }
     debug {
       signingConfig = signingConfigs.getByName("debugConfig")
@@ -99,6 +150,12 @@ android {
       buildConfigField("String", "ENVIRONMENT", "\"DEVELOPMENT\"")
       buildConfigField("boolean", "ENABLE_ANALYTICS", "false")
       buildConfigField("boolean", "ENABLE_MOCK_SEEDING", "true")
+      val debugBackendUrl = (localProps.getProperty("BACKEND_URL")
+          ?: envProps.getProperty("BACKEND_URL")
+          ?: System.getenv("BACKEND_URL")
+          ?: "http://192.168.1.9:5000/").trim().removeSurrounding("\"").removeSurrounding("'")
+      val finalDebugUrl = if (debugBackendUrl.endsWith("/")) debugBackendUrl else "$debugBackendUrl/"
+      buildConfigField("String", "BACKEND_URL", "\"${finalDebugUrl}\"")
     }
   }
   compileOptions {
@@ -211,3 +268,4 @@ dependencies {
   ksp(libs.androidx.room.compiler)
   ksp(libs.moshi.kotlin.codegen)
 }
+

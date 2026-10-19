@@ -1,29 +1,23 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Base Configuration: Enforce HTTPS & System CA Certificates -->
+    <!-- Production Configuration: Strictly enforce HTTPS & System CA Certificates across all traffic -->
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
 
-    <!-- Production Domain Configuration -->
+    <!-- Specific Production Domains: Explicitly enforced HTTPS -->
     <domain-config cleartextTrafficPermitted="false">
         <domain includeSubdomains="true">generativelanguage.googleapis.com</domain>
         <domain includeSubdomains="true">firebase.googleapis.com</domain>
         <domain includeSubdomains="true">gigverse.io</domain>
+        <domain includeSubdomains="true">onrender.com</domain>
+        <domain includeSubdomains="true">railway.app</domain>
         <domain includeSubdomains="true">images.unsplash.com</domain>
         <domain includeSubdomains="true">unsplash.com</domain>
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </domain-config>
-
-    <!-- Development / Local Host Override (Only for Debug) -->
-    <debug-overrides>
-        <trust-anchors>
-            <certificates src="user" />
-            <certificates src="system" />
-        </trust-anchors>
-    </debug-overrides>
 </network-security-config>

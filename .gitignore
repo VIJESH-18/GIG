@@ -129,3 +129,9 @@ $RECYCLE.BIN/
 # Linux
 .directory
 .fuse_hidden*
+
+# Node.js backend
+node_modules/
+**/node_modules/
+*.db
+
