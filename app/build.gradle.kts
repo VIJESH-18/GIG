@@ -29,8 +29,8 @@ android {
     applicationId = "com.gigverse.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = 9
-    versionName = "1.4.1"
+    versionCode = 10
+    versionName = "1.4.2"
 
     val brevoKey = envProps.getProperty("BREVO_API_KEY") ?: System.getenv("BREVO_API_KEY") ?: ""
     val smtpHost = envProps.getProperty("SMTP_HOST") ?: System.getenv("SMTP_HOST") ?: "smtp-relay.brevo.com"
