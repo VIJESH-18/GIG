@@ -170,6 +170,40 @@ async function runTests() {
     assert.strictEqual(clientLogin.data.user.role, 'CLIENT');
     console.log('✓ Client login succeeded');
 
+    // 10. OTP Send (Cloud MongoDB Atlas)
+    console.log('[Test 10] Testing POST /api/otp/send (persisting to MongoDB Atlas)...');
+    const otpDestination = `otp.test.${testTimestamp}@gigverse.cloud`;
+    const sendOtpRes = await request('POST', '/api/otp/send', {
+        destination: otpDestination,
+        channel: 'EMAIL'
+    });
+    assert.strictEqual(sendOtpRes.status, 200, 'OTP Send must return 200');
+    assert.strictEqual(sendOtpRes.data.success, true);
+    assert.ok(sendOtpRes.data.verification_id, 'Must return verification_id');
+    const verificationId = sendOtpRes.data.verification_id;
+    const devOtp = sendOtpRes.data.dev_otp;
+    console.log('✓ OTP generated and persisted to MongoDB Atlas without SQLite');
+
+    // 11. OTP Verify
+    console.log('[Test 11] Testing POST /api/otp/verify with generated OTP...');
+    if (devOtp) {
+        const verifyOtpRes = await request('POST', '/api/otp/verify', {
+            verification_id: verificationId,
+            otp: devOtp
+        });
+        assert.strictEqual(verifyOtpRes.status, 200);
+        assert.strictEqual(verifyOtpRes.data.verified, true);
+        console.log('✓ OTP successfully verified and consumed in MongoDB Atlas');
+    } else {
+        // Bad OTP test
+        const badVerify = await request('POST', '/api/otp/verify', {
+            verification_id: verificationId,
+            otp: '000000'
+        });
+        assert.strictEqual(badVerify.status, 400);
+        console.log('✓ Incorrect OTP rejected as expected');
+    }
+
     console.log('\n======================================================');
     console.log('🎉 ALL BACKEND & MONGODB ATLAS INTEGRATION TESTS PASSED!');
     console.log('======================================================\n');

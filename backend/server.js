@@ -6,13 +6,12 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const axios = require('axios');
-const sqlite3 = require('sqlite3').verbose();
-
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const User = require('./models/User');
+const OtpVerification = require('./models/OtpVerification');
 
 const app = express();
 app.use(cors());
@@ -41,26 +40,7 @@ mongoose.connect(MONGODB_URI, {
     process.exit(1);
 });
 
-// Preserve existing SQLite DB for OTP verifications
-const dbPath = path.resolve(__dirname, 'otp_backend.db');
-const db = new sqlite3.Database(dbPath);
-
-db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS otp_verifications (
-        id TEXT PRIMARY KEY,
-        verification_id TEXT,
-        destination TEXT,
-        channel TEXT,
-        purpose TEXT,
-        otp_hash TEXT,
-        created_at INTEGER,
-        expires_at INTEGER,
-        attempt_count INTEGER DEFAULT 0,
-        resend_count INTEGER DEFAULT 0,
-        consumed_at INTEGER,
-        verified_at INTEGER
-    )`);
-});
+// Cloud-native OTP verification managed via MongoDB Atlas (OtpVerification model)
 
 // Middleware
 const authenticateToken = (req, res, next) => {
@@ -342,21 +322,26 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
     }
 });
 
-// Existing OTP routes (Brevo & SQLite)
+// Cloud-native OTP verification routes (backed by MongoDB Atlas)
 app.post('/api/otp/send', async (req, res) => {
-    const { destination, channel } = req.body;
-    if (!destination || !channel) return res.status(400).json({ success: false, error: 'Missing destination or channel' });
+    try {
+        const { destination, channel } = req.body;
+        if (!destination || !channel) {
+            return res.status(400).json({ success: false, error: 'Missing destination or channel' });
+        }
 
-    const thirtySecondsAgo = Date.now() - 30000;
-    db.get(`SELECT * FROM otp_verifications WHERE destination = ? AND purpose = 'REGISTRATION' ORDER BY created_at DESC LIMIT 1`, [destination], async (err, row) => {
-        if (err) return res.status(500).json({ success: false, error: 'Database error' });
-        
+        const thirtySecondsAgo = Date.now() - 30000;
+        const recent = await OtpVerification.findOne({
+            destination,
+            purpose: 'REGISTRATION'
+        }).sort({ created_at: -1 });
+
         let resendCount = 0;
-        if (row) {
-            if (row.created_at > thirtySecondsAgo) {
+        if (recent) {
+            if (recent.created_at > thirtySecondsAgo) {
                 return res.status(429).json({ success: false, error: 'Please wait 30 seconds before resending.' });
             }
-            resendCount = row.resend_count + 1;
+            resendCount = (recent.resend_count || 0) + 1;
         }
 
         const otp = generateNumericOtp();
@@ -365,61 +350,77 @@ app.post('/api/otp/send', async (req, res) => {
         const createdAt = Date.now();
         const expiresAt = createdAt + (5 * 60 * 1000);
 
-        db.run(`INSERT INTO otp_verifications (id, verification_id, destination, channel, purpose, otp_hash, created_at, expires_at, resend_count) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [`otp_${Date.now()}`, verificationId, destination, channel, 'REGISTRATION', otpHash, createdAt, expiresAt, resendCount],
-            async (insertErr) => {
-                if (insertErr) return res.status(500).json({ success: false, error: 'Database error' });
+        await OtpVerification.create({
+            id: `otp_${Date.now()}`,
+            verification_id: verificationId,
+            destination,
+            channel,
+            purpose: 'REGISTRATION',
+            otp_hash: otpHash,
+            created_at: createdAt,
+            expires_at: expiresAt,
+            resend_count: resendCount
+        });
 
-                if (channel === 'EMAIL') {
-                    if (!process.env.BREVO_API_KEY) {
-                        return res.json({ success: true, verification_id: verificationId, dev_otp: otp });
-                    }
-                    try {
-                        await axios.post('https://api.brevo.com/v3/smtp/email', {
-                            sender: { name: process.env.SMTP_FROM_NAME || 'GIGVERSE Security', email: process.env.SMTP_FROM_EMAIL || 'security@gigverse.com' },
-                            to: [{ email: destination, name: 'GIGVERSE User' }],
-                            subject: 'GIGVERSE Verification Code',
-                            htmlContent: `<html><body><h3>Your Verification Code is: ${otp}</h3><p>It is valid for 5 minutes.</p></body></html>`
-                        }, { headers: { 'api-key': process.env.BREVO_API_KEY } });
-                        return res.json({ success: true, verification_id: verificationId });
-                    } catch (e) {
-                        return res.status(500).json({ success: false, error: 'Email service error' });
-                    }
-                } else {
-                    return res.status(400).json({ success: false, error: 'Invalid channel' });
-                }
+        if (channel === 'EMAIL') {
+            if (!process.env.BREVO_API_KEY) {
+                return res.json({ success: true, verification_id: verificationId, dev_otp: otp });
             }
-        );
-    });
+            try {
+                await axios.post('https://api.brevo.com/v3/smtp/email', {
+                    sender: {
+                        name: process.env.SMTP_FROM_NAME || 'GIGVERSE Security',
+                        email: process.env.SMTP_FROM_EMAIL || 'security@gigverse.com'
+                    },
+                    to: [{ email: destination, name: 'GIGVERSE User' }],
+                    subject: 'GIGVERSE Verification Code',
+                    htmlContent: `<html><body><h3>Your Verification Code is: ${otp}</h3><p>It is valid for 5 minutes.</p></body></html>`
+                }, { headers: { 'api-key': process.env.BREVO_API_KEY } });
+                return res.json({ success: true, verification_id: verificationId });
+            } catch (e) {
+                return res.status(500).json({ success: false, error: 'Email service error' });
+            }
+        } else {
+            return res.status(400).json({ success: false, error: 'Invalid channel' });
+        }
+    } catch (err) {
+        console.error('OTP Send error:', err.message);
+        return res.status(500).json({ success: false, error: 'Database error' });
+    }
 });
 
-app.post('/api/otp/verify', (req, res) => {
-    const { verification_id, otp } = req.body;
-    if (!verification_id || !otp) return res.status(400).json({ success: false, error: 'Missing verification_id or otp' });
+app.post('/api/otp/verify', async (req, res) => {
+    try {
+        const { verification_id, otp } = req.body;
+        if (!verification_id || !otp) {
+            return res.status(400).json({ success: false, error: 'Missing verification_id or otp' });
+        }
 
-    db.get(`SELECT * FROM otp_verifications WHERE verification_id = ? AND purpose = 'REGISTRATION'`, [verification_id], (err, row) => {
-        if (err || !row) return res.status(404).json({ success: false, error: 'Verification not found' });
+        const record = await OtpVerification.findOne({ verification_id, purpose: 'REGISTRATION' });
+        if (!record) {
+            return res.status(404).json({ success: false, error: 'Verification not found' });
+        }
 
-        if (row.consumed_at) return res.status(400).json({ success: false, error: 'OTP is already consumed' });
-        if (Date.now() > row.expires_at) return res.status(400).json({ success: false, error: 'OTP has expired' });
-        if (row.attempt_count >= 5) return res.status(400).json({ success: false, error: 'Too many failed attempts' });
+        if (record.consumed_at) return res.status(400).json({ success: false, error: 'OTP is already consumed' });
+        if (Date.now() > record.expires_at) return res.status(400).json({ success: false, error: 'OTP has expired' });
+        if (record.attempt_count >= 5) return res.status(400).json({ success: false, error: 'Too many failed attempts' });
 
         const inputHash = hashOtp(otp);
-        if (row.otp_hash === inputHash) {
-            db.run(`UPDATE otp_verifications SET consumed_at = ?, verified_at = ?, attempt_count = attempt_count + 1 WHERE verification_id = ?`,
-                [Date.now(), Date.now(), verification_id],
-                (updateErr) => {
-                    if (updateErr) return res.status(500).json({ success: false, error: 'Database error' });
-                    return res.json({ success: true, verified: true });
-                }
-            );
+        if (record.otp_hash === inputHash) {
+            record.consumed_at = Date.now();
+            record.verified_at = Date.now();
+            record.attempt_count = (record.attempt_count || 0) + 1;
+            await record.save();
+            return res.json({ success: true, verified: true });
         } else {
-            db.run(`UPDATE otp_verifications SET attempt_count = attempt_count + 1 WHERE verification_id = ?`, [verification_id], () => {
-                return res.status(400).json({ success: false, error: 'Incorrect OTP' });
-            });
+            record.attempt_count = (record.attempt_count || 0) + 1;
+            await record.save();
+            return res.status(400).json({ success: false, error: 'Incorrect OTP' });
         }
-    });
+    } catch (err) {
+        console.error('OTP Verify error:', err.message);
+        return res.status(500).json({ success: false, error: 'Database error' });
+    }
 });
 
 app.delete('/api/account', authenticateToken, async (req, res) => {
