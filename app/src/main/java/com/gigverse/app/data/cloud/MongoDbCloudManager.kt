@@ -513,10 +513,9 @@ object MongoDbCloudManager {
         try {
             var pulledCount = 0
 
-            // 1. Pull Users and prune local accounts that do not exist in MongoDB Cloud
+            // 1. Pull Users from MongoDB Cloud without deleting local user accounts
             val cloudUsers = getAllUsers()
             if (cloudUsers.isNotEmpty()) {
-                val cloudUserIds = cloudUsers.map { it.id }.toSet()
                 cloudUsers.forEach { cloudUser ->
                     val existing = dao.getUserByIdSync(cloudUser.id)
                     if (existing == null) {
@@ -525,11 +524,6 @@ object MongoDbCloudManager {
                     } else if (existing != cloudUser) {
                         dao.updateUser(cloudUser)
                         pulledCount++
-                    }
-                }
-                dao.getAllUsersSync().forEach { localUser ->
-                    if (localUser.id !in cloudUserIds) {
-                        dao.deleteUserById(localUser.id)
                     }
                 }
             }

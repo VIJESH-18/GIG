@@ -52,14 +52,11 @@ class GigverseRepository(private val dao: AppDao) {
                     dao.insertUser(cloudUser)
                     return cloudUser
                 }
-                // If Cloud is active and user does not exist in Cloud, purge any local orphan
-                val stale = dao.getUserByEmail(normalized)
-                if (stale != null) {
-                    dao.deleteUserById(stale.id)
-                }
-                return null
-            } catch (_: Throwable) {}
+            } catch (t: Throwable) {
+                android.util.Log.w("GigverseRepository", "Cloud lookup error: ${t.message}")
+            }
         }
+        // Always fall back to local database persistence - never delete valid accounts!
         return dao.getUserByEmail(normalized)
     }
 
